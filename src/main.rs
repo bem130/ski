@@ -1,7 +1,7 @@
 // main.rs
 
-// Use clap for command-line argument parsing with derive macros.
 use clap::Parser; // Use the actual name "Parser" as expected by the derive macro
+use std::collections::HashMap;
 use std::fs;
 use std::error::Error;
 
@@ -9,16 +9,17 @@ use std::error::Error;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Input file containing the SK combinator expression
+    /// Input file containing the definitions and final SK combinator expression
     #[arg(short = 'i', long = "input")]
     input: String,
 }
 
-/// Enum representing the SK combinator expressions.
+/// Enum representing the SK combinator expressions, including variables.
 #[derive(Clone, Debug)]
 enum Expr {
     S,
     K,
+    Var(String),
     // Application of two expressions.
     App(Box<Expr>, Box<Expr>),
 }
@@ -29,6 +30,7 @@ impl Expr {
         match self {
             Expr::S => "S".to_string(),
             Expr::K => "K".to_string(),
+            Expr::Var(name) => name.clone(),
             Expr::App(a, b) => {
                 // Parenthesize subexpressions if necessary.
                 let a_str = match **a {
@@ -45,7 +47,7 @@ impl Expr {
     }
 }
 
-/// A simple recursive descent parser for SK combinator expressions.
+/// A simple recursive descent parser for SK combinator expressions and variables.
 struct SKParser<'a> {
     input: &'a str,
     pos: usize,
@@ -62,7 +64,6 @@ impl<'a> SKParser<'a> {
         let mut expr = self.parse_term()?;
         // Parse additional terms for left-associative application.
         while let Some(_) = self.peek_non_space() {
-            // Attempt to parse the next term; break if it fails.
             if let Ok(term) = self.parse_term() {
                 expr = Expr::App(Box::new(expr), Box::new(term));
             } else {
@@ -72,7 +73,7 @@ impl<'a> SKParser<'a> {
         Ok(expr)
     }
 
-    /// Parse a single term: either a combinator or a parenthesized expression.
+    /// Parse a single term: either a combinator, variable, or a parenthesized expression.
     fn parse_term(&mut self) -> Result<Expr, String> {
         self.skip_whitespace();
         if self.pos >= self.input.len() {
@@ -101,7 +102,24 @@ impl<'a> SKParser<'a> {
                 self.pos += 1; // skip ')'
                 Ok(expr)
             },
-            _ => Err(format!("Unexpected character: {}", c)),
+            _ => {
+                // If the character is alphabetic, parse it as an identifier (variable).
+                if c.is_alphabetic() {
+                    let start = self.pos;
+                    while self.pos < self.input.len() {
+                        let ch = self.input[self.pos..].chars().next().unwrap();
+                        if ch.is_alphanumeric() {
+                            self.pos += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let var_name = self.input[start..self.pos].to_string();
+                    Ok(Expr::Var(var_name))
+                } else {
+                    Err(format!("Unexpected character: {}", c))
+                }
+            }
         }
     }
 
@@ -140,7 +158,6 @@ fn reduce_expr(expr: &Expr) -> Option<Expr> {
         if let Expr::App(b, y) = &**a {
             if let Expr::App(s, x) = &**b {
                 if let Expr::S = **s {
-                    // Apply the S rule: substitute and build the new expression.
                     return Some(Expr::App(
                         Box::new(Expr::App(Box::new((**x).clone()), Box::new((**z).clone()))),
                         Box::new(Expr::App(Box::new((**y).clone()), Box::new((**z).clone())))
@@ -185,26 +202,86 @@ fn normalize(expr: &Expr) -> Expr {
     current
 }
 
+/// Recursively substitute defined variables in the expression using the provided definitions.
+fn substitute_expr(expr: &Expr, defs: &HashMap<String, Expr>) -> Expr {
+    match expr {
+        Expr::Var(name) => {
+            // If the variable is defined, substitute it recursively.
+            if let Some(def_expr) = defs.get(name) {
+                substitute_expr(def_expr, defs)
+            } else {
+                expr.clone()
+            }
+        },
+        Expr::App(f, x) => {
+            Expr::App(
+                Box::new(substitute_expr(f, defs)),
+                Box::new(substitute_expr(x, defs))
+            )
+        },
+        _ => expr.clone(),
+    }
+}
+
+/// Parse a single definition line of the form "NAME = expression".
+fn parse_definition_line(line: &str) -> Result<(String, Expr), String> {
+    let parts: Vec<&str> = line.splitn(2, '=').collect();
+    if parts.len() != 2 {
+        return Err("Invalid definition line; expected format NAME = expression".to_string());
+    }
+    let name = parts[0].trim();
+    if name.is_empty() {
+        return Err("Definition name cannot be empty".to_string());
+    }
+    let mut parser = SKParser::new(parts[1].trim());
+    let expr = parser.parse_expr()?;
+    Ok((name.to_string(), expr))
+}
+
 /// Main function: parses command-line arguments, reads the input file,
-/// parses the SK combinator expression, reduces it to normal form, and prints the result.
+/// processes definitions, substitutes them into the final expression, normalizes it, and prints the result.
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments.
     let args = Args::parse();
 
     // Read the input file specified by the -i flag.
     let input_content = fs::read_to_string(&args.input)?;
-    
-    // Create a parser for the input content using our SKParser.
-    let mut parser = SKParser::new(&input_content);
-    // Parse the expression; if there's an error, report it.
-    let expr = parser.parse_expr().map_err(|e| format!("Parse error: {}", e))?;
-    
+
+    // Split input into non-empty lines.
+    let lines: Vec<&str> = input_content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Err("Input file is empty".into());
+    }
+
+    // Store definitions in a hashmap.
+    let mut defs: HashMap<String, Expr> = HashMap::new();
+    // All lines except the final one are treated as definitions.
+    for line in &lines[..lines.len().saturating_sub(1)] {
+        let (name, expr) = parse_definition_line(line)
+            .map_err(|e| format!("Definition parse error: {}", e))?;
+        defs.insert(name, expr);
+    }
+
+    // Parse the final expression.
+    let final_line = lines[lines.len() - 1];
+    let mut parser = SKParser::new(final_line);
+    let expr = parser
+        .parse_expr()
+        .map_err(|e| format!("Parse error in final expression: {}", e))?;
+
     println!("Input expression: {}", expr.to_string());
-    
-    // Normalize the expression by applying reduction rules repeatedly.
-    let normalized_expr = normalize(&expr);
-    
+
+    // Substitute defined variables in the final expression.
+    let substituted_expr = substitute_expr(&expr, &defs);
+    println!("After substitution: {}", substituted_expr.to_string());
+
+    // Normalize the expression.
+    let normalized_expr = normalize(&substituted_expr);
     println!("Normalized expression: {}", normalized_expr.to_string());
-    
+
     Ok(())
 }
