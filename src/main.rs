@@ -420,6 +420,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                     continue;
                 }
             }
+        } else if trimmed.starts_with("#") {
+            // Process step-by-step evaluation
+            let expr_str = trimmed.trim_start_matches('#').trim();
+            let mut parser = SKParser::new(expr_str);
+            match parser.parse_expr() {
+                Ok(expr) => {
+                    println!("{}: {}", highlight::colorize_plain("Step-by-step evaluation", "blue", &mode), to_display_expr(&expr,&defs).to_highlighted_string(&mode, 0));
+                    let substituted_expr = substitute_expr(&expr, &defs);
+                    println!("    Step 0  : {}", to_display_expr(&substituted_expr, &defs).to_highlighted_string(&mode, 0));
+                    let mut current = substituted_expr;
+                    let mut step = 1;
+                    while let Some(next) = reduce_expr(&current) {
+                        println!("    Step {:<3}: {}", step, to_display_expr(&next, &defs).to_highlighted_string(&mode, 0));
+                        current = next;
+                        step += 1;
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Line {:<5}: Error parsing step evaluation expression '{}': {}", line_index + 1, expr_str, e);
+                }
+            }
         } else {
             // Process final expression.
             let mut parser = SKParser::new(trimmed);
