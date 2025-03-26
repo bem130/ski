@@ -15,39 +15,79 @@ enum Expr {
     App(Box<Expr>, Box<Expr>),
 }
 
-impl Expr {
-    /// Convert the expression to a string without highlighting.
-    fn to_string(&self) -> String {
-        match self {
-            Expr::S => "S".to_string(),
-            Expr::K => "K".to_string(),
-            Expr::Var(name) => name.clone(),
-            Expr::App(a, b) => {
-                let a_str = match **a {
-                    Expr::App(_, _) => format!("({})", a.to_string()),
-                    _ => a.to_string(),
-                };
-                let b_str = match **b {
-                    Expr::App(_, _) => format!("({})", b.to_string()),
-                    _ => b.to_string(),
-                };
-                format!("{} {}", a_str, b_str)
+/// New enum for displaying expressions with diff and variable definition coloring.
+#[derive(Clone, Debug, PartialEq)]
+enum DisplayExpr {
+    S,
+    K,
+    UndefinedVar(String),
+    DefinedVar(String),
+    // Application of two expressions.
+    App(Box<DisplayExpr>, Box<DisplayExpr>),
+    // For diff display: extra part in one expression.
+    Excess(Box<DisplayExpr>),
+    // For diff display: missing part (displayed as underscore).
+    Lack,
+}
+
+/// Convert an Expr to a DisplayExpr, taking into account variable definitions.
+/// If the variable is defined in defs, mark it as DefinedVar, otherwise UndefinedVar.
+fn to_display_expr(expr: &Expr, defs: &HashMap<String, Expr>) -> DisplayExpr {
+    match expr {
+        Expr::S => DisplayExpr::S,
+        Expr::K => DisplayExpr::K,
+        Expr::Var(name) => {
+            if defs.contains_key(name) {
+                DisplayExpr::DefinedVar(name.clone())
+            } else {
+                DisplayExpr::UndefinedVar(name.clone())
             }
+        },
+        Expr::App(a, b) => DisplayExpr::App(
+            Box::new(to_display_expr(a, defs)),
+            Box::new(to_display_expr(b, defs))
+        ),
+    }
+}
+
+fn diff_exprs_sym(lhs: &DisplayExpr, rhs: &DisplayExpr) -> (DisplayExpr, DisplayExpr) {
+    if lhs == rhs {
+        return (lhs.clone(), rhs.clone());
+    }
+    match (lhs, rhs) {
+        (DisplayExpr::App(l1, l2), DisplayExpr::App(r1, r2)) => {
+            let (d1_l, d1_r) = diff_exprs_sym(l1, r1);
+            let (d2_l, d2_r) = diff_exprs_sym(l2, r2);
+            return (
+                DisplayExpr::App(Box::new(d1_l), Box::new(d2_l)),
+                DisplayExpr::App(Box::new(d1_r), Box::new(d2_r))
+            );
+        },
+        _ => {
+            // For lhs: mark its extra content in green (Excess) and indicate missing with a red underscore (Lack).
+            // For rhs: show a red underscore first then its extra content in green.
+            let lhs_diff = DisplayExpr::Excess(Box::new(lhs.clone()));
+            let rhs_diff = DisplayExpr::Excess(Box::new(rhs.clone()));
+            return (
+                DisplayExpr::App(Box::new(lhs_diff), Box::new(DisplayExpr::Lack)),
+                DisplayExpr::App(Box::new(DisplayExpr::Lack), Box::new(rhs_diff))
+            );
         }
     }
+}
 
-    /// Convert the expression to a highlighted string using the given highlight mode.
+/// to_highlighted_string implementation for DisplayExpr.
+/// It handles highlighting for diff (Excess, Lack) and variable definition coloring.
+impl DisplayExpr {
     fn to_highlighted_string(&self, mode: &highlight::HighlightMode, depth: usize) -> String {
-        if *mode == highlight::HighlightMode::None {
-            return self.to_string();
-        }
         match self {
-            Expr::S => format!("{}S{}", highlight::colors::pink(mode), highlight::reset(mode)),
-            Expr::K => format!("{}K{}", highlight::colors::pink(mode), highlight::reset(mode)),
-            Expr::Var(name) => format!("{}{}{}", highlight::colors::white(mode), name, highlight::reset(mode)),
-            Expr::App(a, b) => {
+            DisplayExpr::S => format!("{}S{}", highlight::colors::pink(mode), highlight::reset(mode)),
+            DisplayExpr::K => format!("{}K{}", highlight::colors::pink(mode), highlight::reset(mode)),
+            DisplayExpr::UndefinedVar(name) => format!("{}{}{}", highlight::colors::lightblue(mode), name, highlight::reset(mode)),
+            DisplayExpr::DefinedVar(name) => format!("{}{}{}", highlight::colors::orange(mode), name, highlight::reset(mode)),
+            DisplayExpr::App(a, b) => {
                 let a_str = match **a {
-                    Expr::App(_, _) => {
+                    DisplayExpr::App(_, _) => {
                         // Wrap in parentheses with color based on depth.
                         format!("{}({}{}){}", 
                             highlight::paren_color(depth, mode), 
@@ -58,7 +98,7 @@ impl Expr {
                     _ => a.to_highlighted_string(mode, depth),
                 };
                 let b_str = match **b {
-                    Expr::App(_, _) => {
+                    DisplayExpr::App(_, _) => {
                         format!("{}({}{}){}", 
                             highlight::paren_color(depth, mode), 
                             b.to_highlighted_string(mode, depth + 1), 
@@ -68,7 +108,15 @@ impl Expr {
                     _ => b.to_highlighted_string(mode, depth),
                 };
                 format!("{} {}", a_str, b_str)
-            }
+            },
+            DisplayExpr::Excess(inner) => {
+                // Green background for extra parts
+                format!("{}{}{}",  highlight::colors::greenbg(mode), inner.to_highlighted_string(mode, depth), highlight::reset(mode))
+            },
+            DisplayExpr::Lack => {
+                // Red background for missing part, shown as underscore
+                format!("{}_{}",  highlight::colors::redbg(mode), highlight::reset(mode))
+            },
         }
     }
 }
@@ -302,7 +350,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for line in lines {
         let trimmed = line.trim();
         if trimmed.starts_with("$") {
-            // Process test case line (no background color change).
+            // Process test case line.
             let test_line = trimmed.trim_start_matches('$').trim();
             let parts: Vec<&str> = test_line.splitn(2, '=').collect();
             if parts.len() != 2 {
@@ -332,12 +380,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             let rhs_subst = substitute_expr(&rhs_expr, &defs);
             let rhs_norm = normalize(&rhs_subst);
             if lhs_norm == rhs_norm {
-                println!("{}: {}", highlight::colorize_plain("Test passed", "green", &mode), lhs_norm.to_highlighted_string(&mode, 0));
+                println!("{}: {}",
+                    highlight::colorize_plain("Test passed", "green", &mode),
+                    to_display_expr(&lhs_norm,&defs).to_highlighted_string(&mode, 0)
+                );
             } else {
-                println!("{}: LHS: {}, RHS: {}",
+                let lhs_disp = to_display_expr(&lhs_norm, &defs);
+                let rhs_disp = to_display_expr(&rhs_norm, &defs);
+                let (diff_lhs, diff_rhs) = diff_exprs_sym(&lhs_disp, &rhs_disp);
+                println!("{}:\n    LHS: {}\n    RHS: {}",
                     highlight::colorize_plain("Test failed", "red", &mode),
-                    lhs_norm.to_highlighted_string(&mode, 0),
-                    rhs_norm.to_highlighted_string(&mode, 0)
+                    lhs_disp.to_highlighted_string(&mode, 0),
+                    rhs_disp.to_highlighted_string(&mode, 0)
+                );
+                println!("    LHS: {}\n    RHS: {}",
+                    diff_lhs.to_highlighted_string(&mode, 0),
+                    diff_rhs.to_highlighted_string(&mode, 0)
                 );
             }
         } else if trimmed.contains('=') {
@@ -366,18 +424,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if let Some(expr) = final_expr_opt {
-        println!("{}      : {}", highlight::colorize_plain("Final expression", "blue", &mode) , expr.to_highlighted_string(&mode, 0));
+        println!("{}      : {}", highlight::colorize_plain("Final expression", "blue", &mode) , to_display_expr(&expr,&defs).to_highlighted_string(&mode, 0));
         let substituted_expr = substitute_expr(&expr, &defs);
-        println!("{}    : {}", highlight::colorize_plain("After substitution", "blue", &mode) , substituted_expr.to_highlighted_string(&mode, 0));
+        println!("{}    : {}", highlight::colorize_plain("After substitution", "blue", &mode) , to_display_expr(&substituted_expr,&defs).to_highlighted_string(&mode, 0));
         let normalized_expr = normalize(&substituted_expr);
-        println!("{} : {}", highlight::colorize_plain("Normalized expression", "blue", &mode) , normalized_expr.to_highlighted_string(&mode, 0));
+        println!("{} : {}", highlight::colorize_plain("Normalized expression", "blue", &mode) , to_display_expr(&normalized_expr,&defs).to_highlighted_string(&mode, 0));
     }
 
     Ok(())
 }
 
 /// Highlighter module for syntax highlighting.
-mod highlight {
+pub mod highlight {
     /// Highlight mode enum.
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     pub enum HighlightMode {
@@ -410,13 +468,13 @@ mod highlight {
     /// Color functions.
     pub mod colors {
         use super::HighlightMode;
-        use super::reset;
+        // use super::reset;
 
         pub fn pink(mode: &HighlightMode) -> String {
             match mode {
-                HighlightMode::Color16 => "\x1b[35m".to_string(), // magenta
+                HighlightMode::Color16 => "\x1b[35m".to_string(),
                 HighlightMode::Color256 => "\x1b[38;5;207m".to_string(),
-                HighlightMode::TrueColor => "\x1b[38;2;255;105;180m".to_string(), // hot pink
+                HighlightMode::TrueColor => "\x1b[38;2;250;105;200m".to_string(),
                 HighlightMode::None => "".to_string(),
             }
         }
@@ -449,6 +507,46 @@ mod highlight {
                 HighlightMode::Color16 => "\x1b[31m".to_string(),
                 HighlightMode::Color256 => "\x1b[38;5;196m".to_string(),
                 HighlightMode::TrueColor => "\x1b[38;2;250;80;50m".to_string(),
+                HighlightMode::None => "".to_string(),
+            }
+        }
+        pub fn yellow(mode: &HighlightMode) -> String {
+            match mode {
+                HighlightMode::Color16 => "\x1b[33m".to_string(),
+                HighlightMode::Color256 => "\x1b[38;5;11m".to_string(),
+                HighlightMode::TrueColor => "\x1b[38;2;240;230;0m".to_string(),
+                HighlightMode::None => "".to_string(),
+            }
+        }
+        pub fn orange(mode: &HighlightMode) -> String {
+            match mode {
+                HighlightMode::Color16 => "\x1b[33m".to_string(), // Approximated with yellow in Color16 mode as standard ANSI does not include orange.
+                HighlightMode::Color256 => "\x1b[38;5;208m".to_string(), // ANSI escape for orange in Color256 mode.
+                HighlightMode::TrueColor => "\x1b[38;2;255;165;0m".to_string(), // ANSI escape for orange in TrueColor mode.
+                HighlightMode::None => "".to_string(),
+            }
+        }
+        pub fn lightblue(mode: &HighlightMode) -> String {
+            match mode {
+                HighlightMode::Color16 => "\x1b[94m".to_string(),
+                HighlightMode::Color256 => "\x1b[38;5;153m".to_string(),
+                HighlightMode::TrueColor => "\x1b[38;2;53;255;255m".to_string(),
+                HighlightMode::None => "".to_string(),
+            }
+        }
+        pub fn greenbg(mode: &HighlightMode) -> String {
+            match mode {
+                HighlightMode::Color16 => "\x1b[42m".to_string(),
+                HighlightMode::Color256 => "\x1b[48;5;82m".to_string(),
+                HighlightMode::TrueColor => "\x1b[48;2;50;100;30m".to_string(),
+                HighlightMode::None => "".to_string(),
+            }
+        }
+        pub fn redbg(mode: &HighlightMode) -> String {
+            match mode {
+                HighlightMode::Color16 => "\x1b[41m".to_string(),
+                HighlightMode::Color256 => "\x1b[48;5;196m".to_string(),
+                HighlightMode::TrueColor => "\x1b[48;2;250;80;50m".to_string(),
                 HighlightMode::None => "".to_string(),
             }
         }

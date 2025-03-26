@@ -18,8 +18,5 @@ $ (C x y z) = x z y
 // 複製
 W = S S (S K)
 $ (W x y) = x y y
-$ (W x y) = x y y a
-
-
 
 (C x y z)
