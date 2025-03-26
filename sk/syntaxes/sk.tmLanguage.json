@@ -1,0 +1,53 @@
+{
+    "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+    "name": "SK",
+    "scopeName": "source.sk",
+    "patterns": [
+        {
+            "include": "#comments"
+        },
+        {
+            "include": "#keywords"
+        },
+        {
+            "include": "#variable"
+        },
+        {
+            "include": "#dollar"
+        }
+    ],
+    "repository": {
+        "comments": {
+            "patterns": [
+                {
+                    "name": "comment.line.double-slash.sk",
+                    "match": "//.*$"
+                }
+            ]
+        },
+        "keywords": {
+            "patterns": [
+                {
+                    "name": "keyword.control.sk",
+                    "match": "\\b(S|K)\\b"
+                }
+            ]
+        },
+        "variable": {
+            "patterns": [
+                {
+                    "name": "variable.name.sk",
+                    "match": "[A-Za-z]+"
+                }
+            ]
+        },
+        "dollar": {
+            "patterns": [
+                {
+                    "name": "constant.character.dollar.sk",
+                    "match": "\\$"
+                }
+            ]
+        }
+    }
+}

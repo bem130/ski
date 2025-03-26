@@ -1,0 +1,25 @@
+{
+  "name": "sk",
+  "displayName": "sk combinators",
+  "description": "Providing convenience facilities for combinator logic",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "sk",
+      "aliases": ["SK", "sk"],
+      "extensions": [".sk"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "sk",
+      "scopeName": "source.sk",
+      "path": "./syntaxes/sk.tmLanguage.json"
+    }]
+  }
+}

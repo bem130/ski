@@ -81,12 +81,12 @@ impl<'a> SKParser<'a> {
         }
         let c = self.current_char();
         match c {
-            // Recognize S (case-insensitive)
+            // Recognize S
             'S' => {
                 self.pos += 1;
                 Ok(Expr::S)
             },
-            // Recognize K (case-insensitive)
+            // Recognize K
             'K' => {
                 self.pos += 1;
                 Ok(Expr::K)
