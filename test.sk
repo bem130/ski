@@ -1,3 +1,5 @@
-C = S(S(K(S(KS)K))S)(KK)
-I = SKK
-C (I S) K S
+I = S K K
+I2 = S K S // Iの別実装
+C = S (S (K (S (K S)K)) S) (K K) // 引数交換
+
+C (I S) (K S) (I2 (S K))

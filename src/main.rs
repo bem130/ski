@@ -109,7 +109,7 @@ impl<'a> SKParser<'a> {
                     while self.pos < self.input.len() {
                         let ch = self.input[self.pos..].chars().next().unwrap();
                         if ch.is_alphanumeric() {
-                            self.pos += 1;
+                            self.pos += ch.len_utf8();
                         } else {
                             break;
                         }
@@ -123,10 +123,24 @@ impl<'a> SKParser<'a> {
         }
     }
 
-    /// Skip any whitespace characters.
+    /// Skip any whitespace characters and inline comments starting with "//".
     fn skip_whitespace(&mut self) {
-        while self.pos < self.input.len() && self.input[self.pos..].chars().next().unwrap().is_whitespace() {
-            self.pos += 1;
+        loop {
+            // If an inline comment is found, skip the rest of the line.
+            if self.pos < self.input.len() && self.input[self.pos..].starts_with("//") {
+                self.pos = self.input.len();
+                break;
+            }
+            if self.pos < self.input.len() {
+                let ch = self.input[self.pos..].chars().next().unwrap();
+                if ch.is_whitespace() {
+                    self.pos += ch.len_utf8();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -134,11 +148,16 @@ impl<'a> SKParser<'a> {
     fn peek_non_space(&mut self) -> Option<char> {
         let mut pos = self.pos;
         while pos < self.input.len() {
-            let ch = self.input[pos..].chars().next().unwrap();
-            if !ch.is_whitespace() {
+            let remaining = &self.input[pos..];
+            if remaining.starts_with("//") {
+                return None;
+            }
+            let ch = remaining.chars().next().unwrap();
+            if ch.is_whitespace() {
+                pos += ch.len_utf8();
+            } else {
                 return Some(ch);
             }
-            pos += 1;
         }
         None
     }
@@ -247,10 +266,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Read the input file specified by the -i flag.
     let input_content = fs::read_to_string(&args.input)?;
 
-    // Split input into non-empty lines.
+    // Split input into non-empty lines and ignore lines that are pure comments.
     let lines: Vec<&str> = input_content
         .lines()
-        .filter(|line| !line.trim().is_empty())
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with("//")
+        })
         .collect();
 
     if lines.is_empty() {
@@ -273,15 +295,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parse_expr()
         .map_err(|e| format!("Parse error in final expression: {}", e))?;
 
-    println!("Input expression: {}", expr.to_string());
+    println!("Input expression      : {}", expr.to_string());
 
     // Substitute defined variables in the final expression.
     let substituted_expr = substitute_expr(&expr, &defs);
-    println!("After substitution: {}", substituted_expr.to_string());
+    println!("After substitution    : {}", substituted_expr.to_string());
 
     // Normalize the expression.
     let normalized_expr = normalize(&substituted_expr);
-    println!("Normalized expression: {}", normalized_expr.to_string());
+    println!("Normalized expression : {}", normalized_expr.to_string());
 
     Ok(())
 }
