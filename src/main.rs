@@ -270,6 +270,48 @@ fn reduce_expr(expr: &Expr) -> Option<Expr> {
     }
 }
 
+/// Reduce an expression by one step with delayed substitution (for step-by-step evaluation).
+fn reduce_expr_delay_substitute(expr: &Expr, defs: &HashMap<String, Expr>) -> Option<Expr> {
+    match expr {
+        // Variable case: substitute if defined
+        Expr::Var(name) => {
+            if let Some(def) = defs.get(name) {
+                Some(def.clone())
+            } else {
+                None
+            }
+        },
+        // S redex: (((S x) y) z) -> ((x z) (y z))
+        Expr::App(a, z) => {
+            if let Expr::App(b, y) = &**a {
+                if let Expr::App(s, x) = &**b {
+                    if let Expr::S = **s {
+                        return Some(Expr::App(
+                            Box::new(Expr::App(Box::new((**x).clone()), Box::new((**z).clone()))),
+                            Box::new(Expr::App(Box::new((**y).clone()), Box::new((**z).clone())))
+                        ));
+                    }
+                }
+            }
+            // K redex: ((K x) y) -> x
+            if let Expr::App(k, x) = &**a {
+                if let Expr::K = **k {
+                    return Some((**x).clone());
+                }
+            }
+            // Try to reduce subexpressions with variable substitution
+            if let Some(new_f) = reduce_expr_delay_substitute(a, defs) {
+                return Some(Expr::App(Box::new(new_f), z.clone()));
+            }
+            if let Some(new_x) = reduce_expr_delay_substitute(z, defs) {
+                return Some(Expr::App(a.clone(), Box::new(new_x)));
+            }
+            None
+        },
+        _ => None,
+    }
+}
+
 /// Normalize expression by applying reduction until no redex is found.
 fn normalize(expr: &Expr) -> Expr {
     let mut current = expr.clone();
@@ -425,24 +467,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         } else if trimmed.starts_with("#") {
-            // Process step-by-step evaluation
+            // Process step-by-step evaluation with delayed substitution
             let expr_str = trimmed.trim_start_matches('#').trim();
             let mut parser = SKParser::new(expr_str);
             match parser.parse_expr() {
                 Ok(expr) => {
-                    println!("{}: {}", highlight::colorize_plain("Step-by-step evaluation", "blue", &mode), to_display_expr(&expr,&defs).to_highlighted_string(&mode, 0));
-                    let substituted_expr = substitute_expr(&expr, &defs);
-                    println!("    Step 0  : {}", to_display_expr(&substituted_expr, &defs).to_highlighted_string(&mode, 0));
-                    let mut current = substituted_expr;
-                    let mut step = 1;
-                    while let Some(next) = reduce_expr(&current) {
-                        println!("    Step {:<3}: {}", step, to_display_expr(&next, &defs).to_highlighted_string(&mode, 0));
+                    println!("{}: {}", 
+                        highlight::colorize_plain("Step-by-step evaluation", "blue", &mode),
+                        to_display_expr(&expr, &defs).to_highlighted_string(&mode, 0));
+                    let mut current = expr;
+                    let mut step = 0;
+                    println!("    Step {:<3}: {}", 
+                        step,
+                        to_display_expr(&current, &defs).to_highlighted_string(&mode, 0));
+                    step = 1;
+                    while let Some(next) = reduce_expr_delay_substitute(&current, &defs) {
+                        println!("    Step {:<3}: {}", 
+                            step,
+                            to_display_expr(&next, &defs).to_highlighted_string(&mode, 0));
                         current = next;
                         step += 1;
                     }
                 },
                 Err(e) => {
-                    eprintln!("Line {:<5}: Error parsing step evaluation expression '{}': {}", line_index + 1, expr_str, e);
+                    eprintln!("Line {:<5}: Error parsing step evaluation expression '{}': {}", 
+                        line_index + 1, expr_str, e);
                 }
             }
         } else {
