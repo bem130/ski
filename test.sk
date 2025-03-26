@@ -1,8 +1,24 @@
-// 適用': $ (S x y z) -> (x z) (y z)
-// 定数関数: $ (K x y) -> x
-I = S K K // 恒等: $ (I x) -> x
-B = S (K S) K // 関数合成: $ (B x y z) -> x (y z)
-C = S (S (K (S (K S)K)) S) (K K) // 引数交換: $ (C x y z) -> x z y
-W = S S (S K) // 複製: $ (W x y) -> x y y
+// 適用'
+$ (S x y z) = (x z) (y z)
+// 定数関数
+$ (K x y) = x
+
+// 恒等
+I = S K K
+$ (I x) = x
+
+// 関数合成
+B = S (K S) K
+$ (B x y z) = x (y z)
+
+// 引数交換
+C = S (S (K (S (K S)K)) S) (K K)
+$ (C x y z) = x z y
+
+// 複製
+W = S S (S K)
+$ (W x y) = x y y
+
+
 
 (C x y z)

@@ -9,13 +9,13 @@ use std::error::Error;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Input file containing the definitions and final SK combinator expression
+    /// Input file containing the definitions, test cases, and final SK combinator expression.
     #[arg(short = 'i', long = "input")]
     input: String,
 }
 
 /// Enum representing the SK combinator expressions, including variables.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)] // Added PartialEq for comparison in tests.
 enum Expr {
     S,
     K,
@@ -258,7 +258,8 @@ fn parse_definition_line(line: &str) -> Result<(String, Expr), String> {
 }
 
 /// Main function: parses command-line arguments, reads the input file,
-/// processes definitions, substitutes them into the final expression, normalizes it, and prints the result.
+/// processes definitions, test cases, substitutes them into expressions,
+/// normalizes them, and prints the results.
 fn main() -> Result<(), Box<dyn Error>> {
     // Parse command line arguments.
     let args = Args::parse();
@@ -279,31 +280,85 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("Input file is empty".into());
     }
 
-    // Store definitions in a hashmap.
     let mut defs: HashMap<String, Expr> = HashMap::new();
-    // All lines except the final one are treated as definitions.
-    for line in &lines[..lines.len().saturating_sub(1)] {
-        let (name, expr) = parse_definition_line(line)
-            .map_err(|e| format!("Definition parse error: {}", e))?;
-        defs.insert(name, expr);
+    let mut final_expr_opt: Option<Expr> = None;
+
+    // Process each line: definitions, test cases (starting with '$'), or final expression.
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.starts_with("$") {
+            // Process test case line.
+            let test_line = trimmed.trim_start_matches('$').trim();
+            let parts: Vec<&str> = test_line.splitn(2, '=').collect();
+            if parts.len() != 2 {
+                eprintln!("Test parse error: Expected format 'LHS = RHS' in test line: {}", test_line);
+                continue;
+            }
+            let lhs_str = parts[0].trim();
+            let rhs_str = parts[1].trim();
+            // Parse LHS.
+            let mut lhs_parser = SKParser::new(lhs_str);
+            let lhs_expr = match lhs_parser.parse_expr() {
+                Ok(expr) => expr,
+                Err(e) => {
+                    eprintln!("Error parsing LHS in test '{}': {}", test_line, e);
+                    continue;
+                }
+            };
+            // Parse RHS.
+            let mut rhs_parser = SKParser::new(rhs_str);
+            let rhs_expr = match rhs_parser.parse_expr() {
+                Ok(expr) => expr,
+                Err(e) => {
+                    eprintln!("Error parsing RHS in test '{}': {}", test_line, e);
+                    continue;
+                }
+            };
+            // Substitute definitions and normalize both sides.
+            let lhs_subst = substitute_expr(&lhs_expr, &defs);
+            let lhs_norm = normalize(&lhs_subst);
+            let rhs_subst = substitute_expr(&rhs_expr, &defs);
+            let rhs_norm = normalize(&rhs_subst);
+            // Compare the normalized expressions.
+            if lhs_norm == rhs_norm {
+                println!("Test passed: {}  => {}", test_line, lhs_norm.to_string());
+            } else {
+                println!("Test failed: {}  => LHS: {}, RHS: {}",
+                    test_line, lhs_norm.to_string(), rhs_norm.to_string());
+            }
+        } else if trimmed.contains('=') {
+            // Process definition line.
+            match parse_definition_line(trimmed) {
+                Ok((name, expr)) => {
+                    defs.insert(name, expr);
+                },
+                Err(e) => {
+                    eprintln!("Definition parse error: {}", e);
+                    continue;
+                }
+            }
+        } else {
+            // Process final expression.
+            let mut parser = SKParser::new(trimmed);
+            match parser.parse_expr() {
+                Ok(expr) => {
+                    final_expr_opt = Some(expr);
+                },
+                Err(e) => {
+                    eprintln!("Error parsing final expression '{}': {}", trimmed, e);
+                }
+            }
+        }
     }
 
-    // Parse the final expression.
-    let final_line = lines[lines.len() - 1];
-    let mut parser = SKParser::new(final_line);
-    let expr = parser
-        .parse_expr()
-        .map_err(|e| format!("Parse error in final expression: {}", e))?;
-
-    println!("Input expression      : {}", expr.to_string());
-
-    // Substitute defined variables in the final expression.
-    let substituted_expr = substitute_expr(&expr, &defs);
-    println!("After substitution    : {}", substituted_expr.to_string());
-
-    // Normalize the expression.
-    let normalized_expr = normalize(&substituted_expr);
-    println!("Normalized expression : {}", normalized_expr.to_string());
+    // If a final expression exists, print its substitution and normalization.
+    if let Some(expr) = final_expr_opt {
+        println!("Final expression      : {}", expr.to_string());
+        let substituted_expr = substitute_expr(&expr, &defs);
+        println!("After substitution    : {}", substituted_expr.to_string());
+        let normalized_expr = normalize(&substituted_expr);
+        println!("Normalized expression : {}", normalized_expr.to_string());
+    }
 
     Ok(())
 }
