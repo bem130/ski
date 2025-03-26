@@ -389,18 +389,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             let rhs_subst = substitute_expr(&rhs_expr, &defs);
             let rhs_norm = normalize(&rhs_subst);
             if lhs_norm == rhs_norm {
-                println!("Line {:<5}: {}: {}",
+                println!("Line {:<5}: {}: {}  =  {}  =  {}",
                     line_index + 1,
                     highlight::colorize_plain("Test passed", "green", &mode),
+                    to_display_expr(&lhs_expr, &defs).to_highlighted_string(&mode, 0),
+                    to_display_expr(&rhs_expr, &defs).to_highlighted_string(&mode, 0),
                     to_display_expr(&lhs_norm, &defs).to_highlighted_string(&mode, 0)
                 );
             } else {
                 let lhs_disp = to_display_expr(&lhs_norm, &defs);
                 let rhs_disp = to_display_expr(&rhs_norm, &defs);
                 let (diff_lhs, diff_rhs) = diff_exprs_sym(&lhs_disp, &rhs_disp);
-                println!("Line {:<5}: {}:\n    LHS: {}\n    RHS: {}",
+                println!("Line {:<5}: {}: {}  !=  {}\n    LHS: {}\n    RHS: {}",
                     line_index + 1,
                     highlight::colorize_plain("Test failed", "red", &mode),
+                    to_display_expr(&lhs_expr, &defs).to_highlighted_string(&mode, 0),
+                    to_display_expr(&rhs_expr, &defs).to_highlighted_string(&mode, 0),
                     lhs_disp.to_highlighted_string(&mode, 0),
                     rhs_disp.to_highlighted_string(&mode, 0)
                 );
