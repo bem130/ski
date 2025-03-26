@@ -332,29 +332,34 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let mode = highlight::HighlightMode::from_str(&args.highlight);
     let input_content = fs::read_to_string(&args.input)?;
-    let lines: Vec<&str> = input_content
+    let raw_lines: Vec<(usize, &str)> = input_content
         .lines()
-        .filter(|line| {
+        .enumerate()
+        .filter(|(_i, line)| {
             let trimmed = line.trim();
             !trimmed.is_empty() && !trimmed.starts_with("//")
         })
         .collect();
 
-    if lines.is_empty() {
-        return Err("Input file is empty".into());
-    }
+        if raw_lines.is_empty() {
+            return Err("Input file is empty".into());
+        }
 
     let mut defs: HashMap<String, Expr> = HashMap::new();
     let mut final_expr_opt: Option<Expr> = None;
 
-    for line in lines {
+    for (line_index, line) in raw_lines {
         let trimmed = line.trim();
         if trimmed.starts_with("$") {
-            // Process test case line.
+            // Process test case line; include the original line number.
             let test_line = trimmed.trim_start_matches('$').trim();
             let parts: Vec<&str> = test_line.splitn(2, '=').collect();
             if parts.len() != 2 {
-                eprintln!("{}", highlight::colorize_plain(&format!("Test parse error: Expected format 'LHS = RHS' in test line: {}", test_line), "red", &mode));
+                eprintln!("Line {:<5}: {}", line_index + 1, highlight::colorize_plain(
+                    &format!("Test parse error: Expected format 'LHS = RHS' in test line: {}", test_line), 
+                    "red",
+                    &mode
+                ));
                 continue;
             }
             let lhs_str = parts[0].trim();
@@ -363,7 +368,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let lhs_expr = match lhs_parser.parse_expr() {
                 Ok(expr) => expr,
                 Err(e) => {
-                    eprintln!("{}", highlight::colorize_plain(&format!("Error parsing LHS in test '{}': {}", test_line, e), "red", &mode));
+                    eprintln!("Line {:<5}: {}", line_index + 1, highlight::colorize_plain(
+                        &format!("Error parsing LHS in test '{}': {}", test_line, e),
+                        "red",
+                        &mode
+                    ));
                     continue;
                 }
             };
@@ -371,7 +380,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let rhs_expr = match rhs_parser.parse_expr() {
                 Ok(expr) => expr,
                 Err(e) => {
-                    eprintln!("{}", highlight::colorize_plain(&format!("Error parsing RHS in test '{}': {}", test_line, e), "red", &mode));
+                    eprintln!("Line {:<5}: {}", line_index + 1, highlight::colorize_plain(
+                        &format!("Error parsing RHS in test '{}': {}", test_line, e),
+                        "red",
+                        &mode
+                    ));
                     continue;
                 }
             };
@@ -380,20 +393,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             let rhs_subst = substitute_expr(&rhs_expr, &defs);
             let rhs_norm = normalize(&rhs_subst);
             if lhs_norm == rhs_norm {
-                println!("{}: {}",
+                println!("Line {:<5}: {}: {}",
+                    line_index + 1,
                     highlight::colorize_plain("Test passed", "green", &mode),
-                    to_display_expr(&lhs_norm,&defs).to_highlighted_string(&mode, 0)
+                    to_display_expr(&lhs_norm, &defs).to_highlighted_string(&mode, 0)
                 );
             } else {
                 let lhs_disp = to_display_expr(&lhs_norm, &defs);
                 let rhs_disp = to_display_expr(&rhs_norm, &defs);
                 let (diff_lhs, diff_rhs) = diff_exprs_sym(&lhs_disp, &rhs_disp);
-                println!("{}:\n    LHS: {}\n    RHS: {}",
+                println!("Line {:<5}: {}:\n    LHS: {}\n    RHS: {}",
+                    line_index + 1,
                     highlight::colorize_plain("Test failed", "red", &mode),
                     lhs_disp.to_highlighted_string(&mode, 0),
                     rhs_disp.to_highlighted_string(&mode, 0)
                 );
-                println!("    LHS: {}\n    RHS: {}",
+                println!("    LHS diff: {}\n    RHS diff: {}",
                     diff_lhs.to_highlighted_string(&mode, 0),
                     diff_rhs.to_highlighted_string(&mode, 0)
                 );
@@ -405,7 +420,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     defs.insert(name, expr);
                 },
                 Err(e) => {
-                    eprintln!("Definition parse error: {}", e);
+                    eprintln!("Line {:<5}: Definition parse error: {}", line_index + 1, e);
                     continue;
                 }
             }
@@ -417,7 +432,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     final_expr_opt = Some(expr);
                 },
                 Err(e) => {
-                    eprintln!("Error parsing final expression '{}': {}", trimmed, e);
+                    eprintln!("Line {:<5}: Error parsing final expression '{}': {}", line_index + 1, trimmed, e);
                 }
             }
         }
