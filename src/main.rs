@@ -154,14 +154,6 @@ impl<'a> SKParser<'a> {
         }
         let c = self.current_char();
         match c {
-            'S' => {
-                self.pos += 1;
-                Ok(Expr::S)
-            },
-            'K' => {
-                self.pos += 1;
-                Ok(Expr::K)
-            },
             '(' => {
                 self.pos += 1; // skip '('
                 let expr = self.parse_expr()?;
@@ -184,11 +176,15 @@ impl<'a> SKParser<'a> {
                         }
                     }
                     let var_name = self.input[start..self.pos].to_string();
-                    Ok(Expr::Var(var_name))
+                    match var_name.as_str() {
+                        "S" => Ok(Expr::S),
+                        "K" => Ok(Expr::K),
+                        _ => Ok(Expr::Var(var_name))
+                    }
                 } else {
                     Err(format!("Unexpected character: {}", c))
                 }
-            }
+            },
         }
     }
 
