@@ -89,11 +89,9 @@ impl DisplayExpr {
                 let a_str = match **a {
                     DisplayExpr::App(_, _) => {
                         // Wrap in parentheses with color based on depth.
-                        format!("{}({}{}){}", 
-                            highlight::paren_color(depth, mode), 
-                            a.to_highlighted_string(mode, depth + 1), 
-                            highlight::paren_color(depth, mode), 
-                            highlight::reset(mode))
+                        format!("{}", 
+                            a.to_highlighted_string(mode, depth)
+                        )
                     },
                     _ => a.to_highlighted_string(mode, depth),
                 };
