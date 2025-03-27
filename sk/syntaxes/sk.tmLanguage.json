@@ -14,6 +14,9 @@
         },
         {
             "include": "#dollar"
+        },
+        {
+            "include": "#sharp"
         }
     ],
     "repository": {
@@ -46,6 +49,14 @@
                 {
                     "name": "constant.character.dollar.sk",
                     "match": "\\$"
+                }
+            ]
+        },
+        "sharp": {
+            "patterns": [
+                {
+                    "name": "constant.character.sharp.sk",
+                    "match": "\\#"
                 }
             ]
         }
