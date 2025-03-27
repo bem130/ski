@@ -255,18 +255,21 @@ fn reduce_expr(expr: &Expr) -> Option<Expr> {
             }
         }
     }
-    // Try to reduce subexpressions.
-    match expr {
-        Expr::App(f, x) => {
-            if let Some(new_f) = reduce_expr(f) {
-                return Some(Expr::App(Box::new(new_f), x.clone()));
-            }
-            if let Some(new_x) = reduce_expr(x) {
-                return Some(Expr::App(f.clone(), Box::new(new_x)));
-            }
+    // Try to reduce both subexpressions concurrently.
+    if let Expr::App(f, x) = expr {
+        let new_f = reduce_expr(f);
+        let new_x = reduce_expr(x);
+        // If no reduction is possible in both, return None.
+        if new_f.is_none() && new_x.is_none() {
             None
-        },
-        _ => None,
+        } else {
+            // If one side is not reducible, keep the original.
+            let reduced_f = new_f.unwrap_or_else(|| (**f).clone());
+            let reduced_x = new_x.unwrap_or_else(|| (**x).clone());
+            Some(Expr::App(Box::new(reduced_f), Box::new(reduced_x)))
+        }
+    } else {
+        None
     }
 }
 
@@ -299,14 +302,16 @@ fn reduce_expr_delay_substitute(expr: &Expr, defs: &HashMap<String, Expr>) -> Op
                     return Some((**x).clone());
                 }
             }
-            // Try to reduce subexpressions with variable substitution
-            if let Some(new_f) = reduce_expr_delay_substitute(a, defs) {
-                return Some(Expr::App(Box::new(new_f), z.clone()));
+            // Try to reduce both subexpressions with delayed substitution.
+            let new_a = reduce_expr_delay_substitute(a, defs);
+            let new_z = reduce_expr_delay_substitute(z, defs);
+            if new_a.is_none() && new_z.is_none() {
+                None
+            } else {
+                let reduced_a = new_a.unwrap_or_else(|| (**a).clone());
+                let reduced_z = new_z.unwrap_or_else(|| (**z).clone());
+                Some(Expr::App(Box::new(reduced_a), Box::new(reduced_z)))
             }
-            if let Some(new_x) = reduce_expr_delay_substitute(z, defs) {
-                return Some(Expr::App(a.clone(), Box::new(new_x)));
-            }
-            None
         },
         _ => None,
     }
