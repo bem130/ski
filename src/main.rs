@@ -13,6 +13,7 @@ enum Expr {
     Var(String),
     // Application of two expressions.
     App(Box<Expr>, Box<Expr>),
+    Lambda(Box<LambdaExpr>),
 }
 
 /// New enum for displaying expressions with diff and variable definition coloring.
@@ -28,6 +29,18 @@ enum DisplayExpr {
     Excess(Box<DisplayExpr>),
     // For diff display: missing part (displayed as underscore).
     Lack,
+    Lambda(Box<LambdaExpr>),
+}
+
+/// Enum representing lambda calculus expressions.
+#[derive(Clone, Debug, PartialEq)]
+enum LambdaExpr {
+    // A variable represented by a string.
+    Var(String),
+    // A lambda abstraction with a parameter (variable) and a body expression.
+    Abs(String, Box<LambdaExpr>),
+    // An application of two expressions.
+    App(Box<LambdaExpr>, Box<LambdaExpr>),
 }
 
 /// Convert an Expr to a DisplayExpr, taking into account variable definitions.
@@ -47,9 +60,11 @@ fn to_display_expr(expr: &Expr, defs: &HashMap<String, Expr>) -> DisplayExpr {
             Box::new(to_display_expr(a, defs)),
             Box::new(to_display_expr(b, defs))
         ),
+        Expr::Lambda(le) => DisplayExpr::Lambda(le.clone()),
     }
 }
 
+/// Diff two DisplayExpr expressions symmetrically.
 fn diff_exprs_sym(lhs: &DisplayExpr, rhs: &DisplayExpr) -> (DisplayExpr, DisplayExpr) {
     if lhs == rhs {
         return (lhs.clone(), rhs.clone());
@@ -76,8 +91,7 @@ fn diff_exprs_sym(lhs: &DisplayExpr, rhs: &DisplayExpr) -> (DisplayExpr, Display
     }
 }
 
-/// to_highlighted_string implementation for DisplayExpr.
-/// It handles highlighting for diff (Excess, Lack) and variable definition coloring.
+/// Implementation for DisplayExpr to convert it to a highlighted string.
 impl DisplayExpr {
     fn to_highlighted_string(&self, mode: &highlight::HighlightMode, depth: usize) -> String {
         match self {
@@ -88,10 +102,7 @@ impl DisplayExpr {
             DisplayExpr::App(a, b) => {
                 let a_str = match **a {
                     DisplayExpr::App(_, _) => {
-                        // Wrap in parentheses with color based on depth.
-                        format!("{}", 
-                            a.to_highlighted_string(mode, depth)
-                        )
+                        format!("{}", a.to_highlighted_string(mode, depth))
                     },
                     _ => a.to_highlighted_string(mode, depth),
                 };
@@ -108,18 +119,33 @@ impl DisplayExpr {
                 format!("{} {}", a_str, b_str)
             },
             DisplayExpr::Excess(inner) => {
-                // Green background for extra parts
+                // Green background for extra parts.
                 format!("{}{}{}",  highlight::colors::greenbg(mode), inner.to_highlighted_string(mode, depth), highlight::reset(mode))
             },
             DisplayExpr::Lack => {
-                // Red background for missing part, shown as underscore
+                // Red background for missing part, shown as underscore.
                 format!("{}_{}",  highlight::colors::redbg(mode), highlight::reset(mode))
             },
+            DisplayExpr::Lambda(lambda_expr) => {
+                format!("{{ {} }}", lambda_expr.to_string())
+            }
+        }
+    }
+}
+
+/// Implement Display for LambdaExpr for simple string representation.
+impl std::fmt::Display for LambdaExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LambdaExpr::Var(v) => write!(f, "{}", v),
+            LambdaExpr::Abs(param, body) => write!(f, "\\{}.{}", param, body),
+            LambdaExpr::App(l, r) => write!(f, "({} {})", l, r),
         }
     }
 }
 
 /// A simple recursive descent parser for SK combinator expressions and variables.
+/// This parser is extended to also handle lambda calculus expressions wrapped in {}.
 struct SKParser<'a> {
     input: &'a str,
     pos: usize,
@@ -144,7 +170,7 @@ impl<'a> SKParser<'a> {
         Ok(expr)
     }
 
-    /// Parse a single term: combinator, variable, or parenthesized expression.
+    /// Parse a single term: combinator, variable, lambda calculus expression, or parenthesized expression.
     fn parse_term(&mut self) -> Result<Expr, String> {
         self.skip_whitespace();
         if self.pos >= self.input.len() {
@@ -152,6 +178,18 @@ impl<'a> SKParser<'a> {
         }
         let c = self.current_char();
         match c {
+            '{' => {
+                // Process a lambda calculus expression within {}.
+                self.pos += 1; // skip '{'
+                let lambda_expr = self.parse_lambda_expr()?;
+                self.skip_whitespace();
+                if self.pos >= self.input.len() || self.current_char() != '}' {
+                    return Err("Expected '}' at the end of lambda expression".to_string());
+                }
+                self.pos += 1; // skip '}'
+                // Convert the lambda expression to an SK combinator expression.
+                Ok(Expr::Lambda(Box::new(lambda_expr)))
+            },
             '(' => {
                 self.pos += 1; // skip '('
                 let expr = self.parse_expr()?;
@@ -182,7 +220,7 @@ impl<'a> SKParser<'a> {
                 } else {
                     Err(format!("Unexpected character: {}", c))
                 }
-            },
+            }
         }
     }
 
@@ -228,6 +266,89 @@ impl<'a> SKParser<'a> {
     fn current_char(&self) -> char {
         self.input[self.pos..].chars().next().unwrap()
     }
+
+    // --- Lambda Calculus Parser for expressions within {} ---
+
+    /// Parse a lambda calculus expression.
+    fn parse_lambda_expr(&mut self) -> Result<LambdaExpr, String> {
+        self.skip_whitespace();
+        self.parse_lambda_application()
+    }
+
+    /// Parse an application in lambda calculus (left-associative).
+    fn parse_lambda_application(&mut self) -> Result<LambdaExpr, String> {
+        let mut expr = self.parse_lambda_term()?;
+        loop {
+            self.skip_whitespace();
+            if self.pos >= self.input.len() {
+                break;
+            }
+            let c = self.current_char();
+            if c == ')' || c == '}' {
+                break;
+            }
+            let next = self.parse_lambda_term()?;
+            expr = LambdaExpr::App(Box::new(expr), Box::new(next));
+        }
+        Ok(expr)
+    }
+
+    /// Parse a single term in lambda calculus.
+    fn parse_lambda_term(&mut self) -> Result<LambdaExpr, String> {
+        self.skip_whitespace();
+        if self.pos >= self.input.len() {
+            return Err("Unexpected end of input in lambda expression".to_string());
+        }
+        let c = self.current_char();
+        if c == '\\' {
+            self.pos += 1; // skip '\'
+            self.skip_whitespace();
+            let start = self.pos;
+            while self.pos < self.input.len() {
+                let ch = self.current_char();
+                if ch.is_alphanumeric() {
+                    self.pos += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if start == self.pos {
+                return Err("Expected variable after '\\'".to_string());
+            }
+            let var = self.input[start..self.pos].to_string();
+            self.skip_whitespace();
+            if self.pos >= self.input.len() || self.current_char() != '.' {
+                return Err("Expected '.' after lambda parameter".to_string());
+            }
+            self.pos += 1; // skip '.'
+            let body = self.parse_lambda_expr()?;
+            Ok(LambdaExpr::Abs(var, Box::new(body)))
+        } else if c == '(' {
+            self.pos += 1; // skip '('
+            let expr = self.parse_lambda_expr()?;
+            self.skip_whitespace();
+            if self.pos >= self.input.len() || self.current_char() != ')' {
+                return Err("Expected ')' in lambda expression".to_string());
+            }
+            self.pos += 1; // skip ')'
+            Ok(expr)
+        } else {
+            let start = self.pos;
+            while self.pos < self.input.len() {
+                let ch = self.current_char();
+                if ch.is_alphanumeric() {
+                    self.pos += ch.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if start == self.pos {
+                return Err("Expected variable in lambda expression".to_string());
+            }
+            let var = self.input[start..self.pos].to_string();
+            Ok(LambdaExpr::Var(var))
+        }
+    }
 }
 
 /// Reduce an expression by one step (normal order reduction).
@@ -257,11 +378,9 @@ fn reduce_expr(expr: &Expr) -> Option<Expr> {
     if let Expr::App(f, x) = expr {
         let new_f = reduce_expr(f);
         let new_x = reduce_expr(x);
-        // If no reduction is possible in both, return None.
         if new_f.is_none() && new_x.is_none() {
             None
         } else {
-            // If one side is not reducible, keep the original.
             let reduced_f = new_f.unwrap_or_else(|| (**f).clone());
             let reduced_x = new_x.unwrap_or_else(|| (**x).clone());
             Some(Expr::App(Box::new(reduced_f), Box::new(reduced_x)))
@@ -271,10 +390,10 @@ fn reduce_expr(expr: &Expr) -> Option<Expr> {
     }
 }
 
-/// Reduce an expression by one step with delayed substitution (for step-by-step evaluation).
+/// Reduce an expression by one step with delayed substitution.
+/// Now, lambda expressions are expanded at the same timing as variable expansion.
 fn reduce_expr_delay_substitute(expr: &Expr, defs: &HashMap<String, Expr>) -> Option<Expr> {
     match expr {
-        // Variable case: substitute if defined
         Expr::Var(name) => {
             if let Some(def) = defs.get(name) {
                 Some(def.clone())
@@ -282,7 +401,10 @@ fn reduce_expr_delay_substitute(expr: &Expr, defs: &HashMap<String, Expr>) -> Op
                 None
             }
         },
-        // S redex: (((S x) y) z) -> ((x z) (y z))
+        Expr::Lambda(lambda_expr) => {
+            // Expand lambda expression into combinator expression.
+            Some(lambda_to_sk(lambda_expr))
+        },
         Expr::App(a, z) => {
             if let Expr::App(b, y) = &**a {
                 if let Expr::App(s, x) = &**b {
@@ -294,13 +416,11 @@ fn reduce_expr_delay_substitute(expr: &Expr, defs: &HashMap<String, Expr>) -> Op
                     }
                 }
             }
-            // K redex: ((K x) y) -> x
             if let Expr::App(k, x) = &**a {
                 if let Expr::K = **k {
                     return Some((**x).clone());
                 }
             }
-            // Try to reduce both subexpressions with delayed substitution.
             let new_a = reduce_expr_delay_substitute(a, defs);
             let new_z = reduce_expr_delay_substitute(z, defs);
             if new_a.is_none() && new_z.is_none() {
@@ -325,6 +445,7 @@ fn normalize(expr: &Expr) -> Expr {
 }
 
 /// Substitute defined variables in the expression.
+/// Now, lambda expressions are expanded in the same manner as variables.
 fn substitute_expr(expr: &Expr, defs: &HashMap<String, Expr>) -> Expr {
     match expr {
         Expr::Var(name) => {
@@ -333,6 +454,11 @@ fn substitute_expr(expr: &Expr, defs: &HashMap<String, Expr>) -> Expr {
             } else {
                 expr.clone()
             }
+        },
+        Expr::Lambda(lambda_expr) => {
+            // Expand lambda expression into combinator expression.
+            let expanded = lambda_to_sk(lambda_expr);
+            substitute_expr(&expanded, defs)
         },
         Expr::App(f, x) => {
             Expr::App(Box::new(substitute_expr(f, defs)), Box::new(substitute_expr(x, defs)))
@@ -382,9 +508,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect();
 
-        if raw_lines.is_empty() {
-            return Err("Input file is empty".into());
-        }
+    if raw_lines.is_empty() {
+        return Err("Input file is empty".into());
+    }
 
     let mut defs: HashMap<String, Expr> = HashMap::new();
     let mut final_expr_opt: Option<Expr> = None;
@@ -392,7 +518,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     for (line_index, line) in raw_lines {
         let trimmed = line.trim();
         if trimmed.starts_with("$") {
-            // Process test case line; include the original line number.
+            // Process test case line.
             let test_line = trimmed.trim_start_matches('$').trim();
             let parts: Vec<&str> = test_line.splitn(2, '=').collect();
             if parts.len() != 2 {
@@ -470,24 +596,27 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         } else if trimmed.starts_with("#") {
-            // Process step-by-step evaluation with delayed substitution
+            // Process step-by-step evaluation with delayed substitution.
             let expr_str = trimmed.trim_start_matches('#').trim();
             let mut parser = SKParser::new(expr_str);
             match parser.parse_expr() {
                 Ok(expr) => {
                     println!("{}: {}", 
                         highlight::colorize_plain("Step-by-step evaluation", "blue", &mode),
-                        to_display_expr(&expr, &defs).to_highlighted_string(&mode, 0));
+                        to_display_expr(&expr, &defs).to_highlighted_string(&mode, 0)
+                    );
                     let mut current = expr;
                     let mut step = 0;
                     println!("    Step {:<3}: {}", 
                         step,
-                        to_display_expr(&current, &defs).to_highlighted_string(&mode, 0));
+                        to_display_expr(&current, &defs).to_highlighted_string(&mode, 0)
+                    );
                     step = 1;
                     while let Some(next) = reduce_expr_delay_substitute(&current, &defs) {
                         println!("    Step {:<3}: {}", 
                             step,
-                            to_display_expr(&next, &defs).to_highlighted_string(&mode, 0));
+                            to_display_expr(&next, &defs).to_highlighted_string(&mode, 0)
+                        );
                         current = next;
                         step += 1;
                     }
@@ -512,14 +641,85 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     if let Some(expr) = final_expr_opt {
-        println!("{}      : {}", highlight::colorize_plain("Final expression", "blue", &mode) , to_display_expr(&expr,&defs).to_highlighted_string(&mode, 0));
+        println!("{}      : {}", highlight::colorize_plain("Final expression", "blue", &mode),
+            to_display_expr(&expr, &defs).to_highlighted_string(&mode, 0));
         let substituted_expr = substitute_expr(&expr, &defs);
-        println!("{}    : {}", highlight::colorize_plain("After substitution", "blue", &mode) , to_display_expr(&substituted_expr,&defs).to_highlighted_string(&mode, 0));
+        println!("{}    : {}", highlight::colorize_plain("After substitution", "blue", &mode),
+            to_display_expr(&substituted_expr, &defs).to_highlighted_string(&mode, 0));
         let normalized_expr = normalize(&substituted_expr);
-        println!("{} : {}", highlight::colorize_plain("Normalized expression", "blue", &mode) , to_display_expr(&normalized_expr,&defs).to_highlighted_string(&mode, 0));
+        println!("{} : {}", highlight::colorize_plain("Normalized expression", "blue", &mode),
+            to_display_expr(&normalized_expr, &defs).to_highlighted_string(&mode, 0));
     }
 
     Ok(())
+}
+
+/// Convert a LambdaExpr to an SK combinator expression.
+fn lambda_to_sk(lambda_expr: &LambdaExpr) -> Expr {
+    // Helper function to check if a variable is free in the LambdaExpr.
+    fn is_free(var: &str, expr: &LambdaExpr) -> bool {
+        match expr {
+            LambdaExpr::Var(ref v) => v == var,
+            LambdaExpr::Abs(ref param, ref body) => {
+                if param == var {
+                    false
+                } else {
+                    is_free(var, body)
+                }
+            },
+            LambdaExpr::App(ref left, ref right) => {
+                is_free(var, left) || is_free(var, right)
+            },
+        }
+    }
+
+    match lambda_expr {
+        // Variable case.
+        LambdaExpr::Var(v) => Expr::Var(v.clone()),
+        // Abstraction case.
+        LambdaExpr::Abs(param, body) => {
+            // If the body is exactly the variable, return I = S K K.
+            if let LambdaExpr::Var(v) = &**body {
+                if v == param {
+                    return Expr::App(
+                        Box::new(Expr::App(Box::new(Expr::S), Box::new(Expr::K))),
+                        Box::new(Expr::K)
+                    );
+                }
+            }
+            // If the parameter does not appear free in the body, use K.
+            if !is_free(param, body) {
+                return Expr::App(
+                    Box::new(Expr::K),
+                    Box::new(lambda_to_sk(body))
+                );
+            }
+            // If the body is an application, apply the S-rule.
+            if let LambdaExpr::App(ref left, ref right) = **body {
+                return Expr::App(
+                    Box::new(Expr::App(
+                        Box::new(Expr::S),
+                        Box::new(lambda_to_sk(&LambdaExpr::Abs(param.clone(), left.clone())))
+                    )),
+                    Box::new(lambda_to_sk(&LambdaExpr::Abs(param.clone(), right.clone())))
+                );
+            }
+            // Fallback: apply S in a general way.
+            Expr::App(
+                Box::new(Expr::App(Box::new(Expr::S),
+                    Box::new(lambda_to_sk(body))
+                )),
+                Box::new(lambda_to_sk(body))
+            )
+        },
+        // Application case.
+        LambdaExpr::App(left, right) => {
+            Expr::App(
+                Box::new(lambda_to_sk(left)),
+                Box::new(lambda_to_sk(right))
+            )
+        },
+    }
 }
 
 /// Highlighter module for syntax highlighting.
@@ -556,8 +756,6 @@ pub mod highlight {
     /// Color functions.
     pub mod colors {
         use super::HighlightMode;
-        // use super::reset;
-
         pub fn pink(mode: &HighlightMode) -> String {
             match mode {
                 HighlightMode::Color16 => "\x1b[35m".to_string(),
@@ -608,9 +806,9 @@ pub mod highlight {
         }
         pub fn orange(mode: &HighlightMode) -> String {
             match mode {
-                HighlightMode::Color16 => "\x1b[33m".to_string(), // Approximated with yellow in Color16 mode as standard ANSI does not include orange.
-                HighlightMode::Color256 => "\x1b[38;5;208m".to_string(), // ANSI escape for orange in Color256 mode.
-                HighlightMode::TrueColor => "\x1b[38;2;255;165;0m".to_string(), // ANSI escape for orange in TrueColor mode.
+                HighlightMode::Color16 => "\x1b[33m".to_string(),
+                HighlightMode::Color256 => "\x1b[38;5;208m".to_string(),
+                HighlightMode::TrueColor => "\x1b[38;2;255;165;0m".to_string(),
                 HighlightMode::None => "".to_string(),
             }
         }
@@ -657,13 +855,12 @@ pub mod highlight {
                 format!("\x1b[38;5;{}m", code)
             },
             HighlightMode::TrueColor => {
-                // For open parentheses, we use a default truecolor palette.
                 let palette = [
-                    (164, 219, 211), // #A4DBD3
-                    (217, 201, 145), // #D9C991
-                    (145, 189, 217), // #91BDD9
-                    (217, 187, 145), // #D9BB91
-                    (132, 137, 140), // #84898C
+                    (164, 219, 211),
+                    (217, 201, 145),
+                    (145, 189, 217),
+                    (217, 187, 145),
+                    (132, 137, 140),
                 ];
                 let (r, g, b) = palette[depth % palette.len()];
                 format!("\x1b[38;2;{};{};{}m", r, g, b)
