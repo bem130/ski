@@ -127,8 +127,40 @@ impl DisplayExpr {
                 format!("{}_{}",  highlight::colors::redbg(mode), highlight::reset(mode))
             },
             DisplayExpr::Lambda(lambda_expr) => {
-                format!("{{ {} }}", lambda_expr.to_string())
+                format!("{{ {} }}", lambda_expr.to_highlighted_string(mode, depth))
             }
+        }
+    }
+}
+
+impl LambdaExpr {
+    /// Convert the LambdaExpr to a highlighted string using the given highlight mode and depth.
+    fn to_highlighted_string(&self, mode: &highlight::HighlightMode, depth: usize) -> String {
+        match self {
+            // Highlight variables in light blue.
+            LambdaExpr::Var(v) => format!("{}{}{}", highlight::colors::lightblue(mode), v, highlight::reset(mode)),
+            // For abstractions, highlight the lambda symbol and dot in blue,
+            // and the parameter in orange.
+            LambdaExpr::Abs(param, body) => {
+                let lambda_symbol = format!("{}\\{}", highlight::colors::yellow(mode), highlight::reset(mode));
+                let param_str = format!("{}{}{}", highlight::colors::orange(mode), param, highlight::reset(mode));
+                let dot = format!("{}.{}", highlight::colors::blue(mode), highlight::reset(mode));
+                let body_str = body.to_highlighted_string(mode, depth);
+                format!("{}{}{}{}", lambda_symbol, param_str, dot, body_str)
+            },
+            // For applications, simply enclose the expression in parentheses.
+            LambdaExpr::App(l, r) => {
+                let left_str = l.to_highlighted_string(mode, depth+1);
+                let right_str = r.to_highlighted_string(mode, depth + 1);
+                format!("{}({}{} {}{}){}",
+                    highlight::paren_color(depth, mode),
+                    highlight::reset(mode),
+                    left_str,
+                    right_str,
+                    highlight::paren_color(depth, mode),
+                    highlight::reset(mode)
+                )
+            },
         }
     }
 }
